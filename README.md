@@ -233,9 +233,18 @@ npm run check                                      # lint + typecheck + unit, be
 GitHub's Ubuntu runners have Docker, so Testcontainers works with no extra setup. Copy it to
 `.github/workflows/` and adjust the Node version.
 
-## Why SWC and not ts-jest
+## Why SWC (and when ts-jest)
 
-ts-jest type-checks every test file, in every Jest worker. On a large NestJS service that is
+ts-jest with type-checking checks every test file, in every Jest worker. On a large NestJS service that is
 minutes per run and over a gigabyte of memory per worker; seven workers can exhaust a laptop. SWC
 only strips the types (a few MB per worker) and `npm run typecheck` checks them once. Decorators
 and `emitDecoratorMetadata`, which NestJS and TypeORM need, are configured in `jest.base.cjs`.
+
+One exception: TypeORM entities that import each other fail under SWC ("Cannot access 'Role'
+before initialization"). For TypeORM projects on TypeScript 6 or earlier, setup.sh switches the
+kit to ts-jest in transpile-only mode (`compiler = 'ts-jest'` in `jest.base.cjs`): TypeScript's own
+output, still without type-checking. On a NestJS + TypeORM service with 665 tests that ran in about
+40 seconds on two workers, where type-checking ts-jest had taken over ten minutes.
+
+Mocks: the kit clears call history between tests (`clearMocks`) and leaves implementations
+alone, so suites that set up mocks once in a `jest.mock()` factory keep working.

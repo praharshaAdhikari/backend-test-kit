@@ -81,6 +81,22 @@ const swc = [
   }
 ];
 
+/**
+ * Which compiler turns TypeScript into what Jest runs:
+ * - 'swc' (default): fastest.
+ * - 'ts-jest': TypeScript's own output, without type-checking. For TypeORM entities that point
+ *   at each other (User <-> Role): with SWC those circular imports fail with "Cannot access 'Role'
+ *   before initialization"; TypeScript's output handles them as the build does. Needs TypeScript
+ *   6 or earlier. setup.sh picks this for TypeORM projects.
+ * ES-module JavaScript from node_modules (esmPackages) always goes through SWC.
+ */
+const compiler = 'swc'; // __COMPILER__
+const tsJest = ['ts-jest', { tsconfig: '<rootDir>/test/setup/tsconfig.jest.json' }];
+const transform =
+  compiler === 'ts-jest'
+    ? { '^.+\\.[cm]?ts$': tsJest, '^.+\\.[cm]?js$': swc }
+    : { '^.+\\.[cm]?[tj]s$': swc };
+
 const ignoredFolders = ['/node_modules/', '/dist/', '/build/', '/coverage/'];
 
 module.exports = {
@@ -89,15 +105,15 @@ module.exports = {
   baseConfig: {
     rootDir,
     testEnvironment: 'node',
-    transform: { '^.+\\.[cm]?[tj]s$': swc },
+    transform,
     // `\.pnpm` keeps pnpm's nested node_modules layout working.
     transformIgnorePatterns: [`/node_modules/(?!(?:\\.pnpm|${esmPackages.join('|')})/)`],
     ...withRelativeJsImports(aliasesFromTsconfig()),
     testPathIgnorePatterns: ignoredFolders,
     setupFilesAfterEnv: ['<rootDir>/test/setup/jest.setup.ts'],
-    // Every test starts with fresh mocks: return values a test set, and spies, are undone.
-    resetMocks: true,
-    restoreMocks: true,
+    // Call history is cleared between tests. Implementations are left alone, so mocks a test file
+    // sets up once (in a jest.mock factory, or beforeAll) keep working, as existing suites expect.
+    clearMocks: true,
     collectCoverageFrom: [
       `<rootDir>/${sourceDir === '.' ? '' : `${sourceDir}/`}**/*.ts`,
       '!**/*.spec.ts',

@@ -123,6 +123,7 @@ main() {
     eslint.testing.mjs
     test/setup/jest.base.cjs
     test/setup/tsconfig.cjs
+    test/setup/tsconfig.jest.json
     test/setup/jest.setup.ts
     test/setup/global-setup.cjs
     test/setup/global-setup.ts
@@ -293,7 +294,7 @@ if (!migrate) {
 const names = new Set();
 const envFiles = ['.env.example', '.env.template', '.env.sample', '.env.dist'].filter(f => fs.existsSync(f));
 for (const f of envFiles) {
-  for (const m of fs.readFileSync(f, 'utf8').matchAll(/^\s*([A-Z][A-Z0-9_]*)\s*=/gm)) names.add(m[1]);
+  for (const m of fs.readFileSync(f, 'utf8').matchAll(/^[ \t]*([A-Z][A-Z0-9_]*)[ \t]*=/gm)) names.add(m[1]);
 }
 function scan(dir, depth) {
   if (depth > 6) return;
@@ -320,6 +321,8 @@ const roles = [
   ['database', /_(DB|NAME|DATABASE|DBNAME|SCHEMA)$/]
 ];
 const otherServices = /REDIS|SMTP|MAIL|S3|AWS|MONGO|RABBIT|KAFKA|ELASTIC|STRIPE|SQUARE|SENTRY|APP_|SERVER_/;
+// Connection tuning and container-only settings, not "where is the database".
+const notConnection = /STRICT|ROOT|HOST_PORT|SSL|POOL|TIMEOUT|LIMIT|CHARSET|LOGGING|SYNC/;
 const env = [];
 const prefixes = new Set([...names].filter(n => /_HOST(NAME)?$/.test(n)).map(n => n.replace(/_HOST(NAME)?$/, '')));
 for (const prefix of prefixes) {
@@ -327,6 +330,7 @@ for (const prefix of prefixes) {
   const members = [...names].filter(n => n.startsWith(`${prefix}_`));
   if (!members.some(n => /_(DB|NAME|DATABASE|DBNAME)$/.test(n))) continue;
   for (const name of members) {
+    if (notConnection.test(name.slice(prefix.length))) continue;
     const role = roles.find(([, re]) => re.test(name.slice(prefix.length)));
     if (role) env.push(`    ${name}: ${role[0] === 'port' ? 'String(db.port)' : `db.${role[0]}`},`);
   }
@@ -346,7 +350,7 @@ if (!needsDatabase) {
 const testEnv = [];
 const dbNames = new Set(env.map(line => line.trim().split(':')[0]));
 for (const f of envFiles) {
-  for (const m of fs.readFileSync(f, 'utf8').matchAll(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)$/gm)) {
+  for (const m of fs.readFileSync(f, 'utf8').matchAll(/^[ \t]*([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*(.*)$/gm)) {
     const [, name, raw] = m;
     const value = raw.replace(/\s+#.*$/, '').trim().replace(/^(['"])(.*)\1$/, '$2');
     if (!value || dbNames.has(name) || ['NODE_ENV', 'PORT', 'DATABASE_URL'].includes(name)) continue;
@@ -389,6 +393,24 @@ NODE
       echo "  (left out the database example: this service has no database)"
     fi
     find "$source_dir/examples" -name '*spec.ts' | sed 's/^/  /'
+  fi
+
+  # --- Compiler ----------------------------------------------------------------------------
+
+  local compiler=swc
+  if node -e '
+    const fs = require("fs");
+    const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    const deps = { ...p.dependencies, ...p.devDependencies };
+    let tsMajor = NaN;
+    try { tsMajor = parseInt(JSON.parse(fs.readFileSync("node_modules/typescript/package.json", "utf8")).version, 10); } catch {}
+    process.exit((deps.typeorm || deps["@nestjs/typeorm"]) && tsMajor < 7 ? 0 : 1);
+  '; then
+    compiler=ts-jest
+    sed -i.bak "s#^const compiler = 'swc'; // __COMPILER__#const compiler = 'ts-jest'; // TypeORM: see above#" test/setup/jest.base.cjs
+    rm -f test/setup/jest.base.cjs.bak
+    step "Compiler"
+    echo "  ts-jest (transpile-only): TypeORM entities often import each other, which SWC cannot load"
   fi
 
   # --- TypeScript --------------------------------------------------------------------------
@@ -506,7 +528,7 @@ NODE
 
   if [ "$install" = 1 ]; then
     local deps pm
-    deps="$(KIT="$kit" PROJECT="$project" node -e '
+    deps="$(KIT="$kit" PROJECT="$project" COMPILER="$compiler" node -e '
       const { devDependencies } = require(process.env.KIT + "/package.additions.json");
       const project = JSON.parse(process.env.PROJECT);
       // Only what the project does not have yet: its own versions of jest, supertest, mysql2, ...
@@ -514,6 +536,7 @@ NODE
       const has = project.deps;
       const missing = Object.entries(devDependencies).filter(([n]) => !has.includes(n));
       if (has.includes("jest")) missing.splice(0, missing.length, ...missing.filter(([n]) => n !== "@types/jest"));
+      if (process.env.COMPILER === "ts-jest" && !has.includes("ts-jest")) missing.push(["ts-jest", "^29.4.0"]);
       console.log(missing.map(([n, v]) => `${n}@${v}`).join(" "));
     ')"
     if [ -f pnpm-lock.yaml ]; then pm=pnpm

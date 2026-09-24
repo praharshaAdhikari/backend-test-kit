@@ -11,6 +11,25 @@ Jest worker: on a large NestJS service, over a gigabyte per worker, several work
 still checked, once, by `npm run typecheck`. Until you switch, cap the workers:
 `npx jest --maxWorkers=2`.
 
+## "ReferenceError: Cannot access 'Role' before initialization"
+
+**Cause:** TypeORM entities that import each other (`User` has a `Role`, `Role` has `User`s),
+compiled with SWC. SWC's CommonJS output reads the other class before its module has finished
+loading; TypeScript's output does not.
+
+**Fix:** use ts-jest in transpile-only mode: set `const compiler = 'ts-jest'` in
+`test/setup/jest.base.cjs` and install `ts-jest` (setup.sh does both for TypeORM projects on
+TypeScript 6 or earlier). On TypeScript 7, which ts-jest does not support, wrap the relation types
+instead: `@ManyToOne(() => Role) role: Relation<Role>` (TypeORM's `Relation` type).
+
+## A mock that was set up once stops working after the first test
+
+**Cause:** a Jest config with `resetMocks` or `restoreMocks` wipes mock implementations before
+every test, including those set in a `jest.mock()` factory or in `beforeAll`.
+
+**Fix:** the kit only uses `clearMocks` (call history is cleared, implementations stay). If you
+merged the kit into an older config, remove `resetMocks` and `restoreMocks` from it.
+
 ## "Must use import to load ES Module"
 
 ```

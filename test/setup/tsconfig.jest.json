@@ -1,0 +1,5 @@
+{
+  "//": "ts-jest compiles tests with this when jest.base.cjs uses compiler = ts-jest: the project tsconfig, transpile-only (no type-checking; npm run typecheck does that).",
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "isolatedModules": true }
+}
