@@ -7,6 +7,17 @@ import jest from 'eslint-plugin-jest';
  * Catches focused tests left in (`it.only`), tests with no assertion, and duplicate names.
  */
 export const testingConfig = [
+  // The kit's own config files are CommonJS (Jest loads them with require). Linted with a
+  // TypeScript config they fail `no-require-imports`; they are the kit's, so they are skipped.
+  {
+    ignores: [
+      'jest.config.cjs',
+      'jest.integration.config.cjs',
+      'test/setup/global-setup.cjs',
+      'test/setup/jest.base.cjs',
+      'test/setup/tsconfig.cjs'
+    ]
+  },
   {
     ...jest.configs['flat/recommended'],
     files: ['**/*.spec.ts', '**/*.int-spec.ts', '**/*.e2e-spec.ts', 'test/**/*.ts'],
