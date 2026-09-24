@@ -1,5 +1,6 @@
 import { type INestApplication, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import type { Server } from 'node:http';
 import request from 'supertest';
 import { MembersController, MembersService } from './members.controller.js';
 
@@ -28,7 +29,7 @@ describe('GET /members/:id', () => {
   it('returns the member', async () => {
     members.findOne.mockResolvedValue({ id: 7, name: 'Asha' });
 
-    const res = await request(app.getHttpServer()).get('/members/7');
+    const res = await request(app.getHttpServer() as Server).get('/members/7');
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: 7, name: 'Asha' });
@@ -36,7 +37,7 @@ describe('GET /members/:id', () => {
   });
 
   it('answers 400 for an id that is not a number, without asking the service', async () => {
-    const res = await request(app.getHttpServer()).get('/members/seven');
+    const res = await request(app.getHttpServer() as Server).get('/members/seven');
 
     expect(res.status).toBe(400);
     expect(members.findOne).not.toHaveBeenCalled();
@@ -45,9 +46,9 @@ describe('GET /members/:id', () => {
   it('answers 404 when the service says the member does not exist', async () => {
     members.findOne.mockRejectedValue(new NotFoundException('Member #7 not found'));
 
-    const res = await request(app.getHttpServer()).get('/members/7');
+    const res = await request(app.getHttpServer() as Server).get('/members/7');
 
     expect(res.status).toBe(404);
-    expect(res.body.message).toBe('Member #7 not found');
+    expect((res.body as { message: unknown }).message).toBe('Member #7 not found');
   });
 });

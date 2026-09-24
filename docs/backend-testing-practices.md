@@ -23,7 +23,8 @@ Short enough to read once, specific enough to review against.
 3. **One behaviour per test, named as a sentence.** `it('refuses a second note with the same
    title')`, not `it('works')`. Arrange, act, assert, with a blank line between each.
 4. **Every test starts clean.** `resetDatabase()` in `beforeEach` for integration tests; nothing
-   shared through module-level `let`. The kit resets mocks, env, timers and MSW handlers for you.
+   shared through module-level `let`. The kit clears mock calls and resets env, timers and MSW
+   handlers for you; a mock a test changes should be set up in that test or its beforeEach.
 5. **Specific assertions.** The exact status, the exact body, the exact rows. No bare
    `toHaveBeenCalled()`, no `toBeTruthy()` on something with a real value.
 6. **No real network, no real time.** A request to an address the test did not fake fails it.
@@ -46,6 +47,15 @@ Short enough to read once, specific enough to review against.
 - [ ] Not found (404)
 - [ ] Each way a dependency fails, and what the caller gets for it
 
+**A guard, interceptor or pipe** (NestJS)
+- [ ] Unit: each branch of `canActivate` / `intercept` / `transform`, with a small fake context
+- [ ] Over HTTP once, through a real route: the status code it produces (401, 403, 400)
+
+**A DTO or validation schema**
+- [ ] One table row per rule, each giving 400 and naming the field; nothing reaches the service
+- [ ] Unknown fields are refused (or dropped), if that is the setting
+- [ ] A valid body arrives as the right types (numbers, dates), after transformation
+
 **A call to another service** (payment, email, a core API behind a backend-for-frontend)
 - [ ] The request sent: URL, method, headers passed on (tokens), body
 - [ ] The success response mapped to what the caller needs
@@ -61,7 +71,7 @@ Short enough to read once, specific enough to review against.
 - [ ] Triggers, if the schema has them: the rows they write
 
 **Scheduled jobs and queues**
-- [ ] The job's effect, called directly (not through the scheduler)
+- [ ] The job's effect, called directly (not through the scheduler), with the clock fixed
 - [ ] Running it twice does not do the work twice
 - [ ] What it does when a dependency fails halfway
 

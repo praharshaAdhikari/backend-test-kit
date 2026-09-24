@@ -10,6 +10,10 @@ const { readTsconfig } = require('./tsconfig.cjs');
 
 const rootDir = path.resolve(__dirname, '..', '..');
 
+// Every test run in UTC, whatever the machine's time zone, so date code gives the same answer on
+// a laptop in Kathmandu and in CI. To test another zone, run with TEST_TZ=Asia/Kathmandu.
+process.env.TZ = process.env.TEST_TZ ?? 'UTC';
+
 /**
  * Packages in node_modules that ship only ES modules, which Jest cannot load as they are, so
  * they are compiled like the project's own code. MSW needs the first three. When a test fails
@@ -87,7 +91,8 @@ const swc = [
  * - 'ts-jest': TypeScript's own output, without type-checking. For TypeORM entities that point
  *   at each other (User <-> Role): with SWC those circular imports fail with "Cannot access 'Role'
  *   before initialization"; TypeScript's output handles them as the build does. Needs TypeScript
- *   6 or earlier. setup.sh picks this for TypeORM projects.
+ *   6 or earlier and a CommonJS project; setup.sh picks it for such TypeORM projects. (ESM
+ *   projects wrap relations in TypeORM's Relation<> type, which avoids the problem under SWC.)
  * ES-module JavaScript from node_modules (esmPackages) always goes through SWC.
  */
 const compiler = 'swc'; // __COMPILER__

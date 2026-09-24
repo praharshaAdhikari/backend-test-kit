@@ -2,6 +2,14 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Connection, RowDataPacket } from 'mysql2/promise';
 
+interface TableRow extends RowDataPacket {
+  name: string;
+}
+
+interface MaxIdRow extends RowDataPacket {
+  maxId: number | null;
+}
+
 /** Where the test database is. Passed to project.ts's migrate() and appEnv(). */
 export interface TestDatabase {
   host: string;
@@ -70,7 +78,7 @@ export async function recordSeededRows(db: TestDatabase, keepTables: string[]): 
     const [[saved]] = await conn.query<RowDataPacket[]>('SELECT 1 FROM test_kit_seed LIMIT 1');
     if (saved) return;
 
-    const [tables] = await conn.query<RowDataPacket[]>(
+    const [tables] = await conn.query<TableRow[]>(
       `SELECT t.table_name AS name FROM information_schema.tables t
          JOIN information_schema.columns c
            ON c.table_schema = t.table_schema AND c.table_name = t.table_name AND c.column_name = 'id'
@@ -79,7 +87,7 @@ export async function recordSeededRows(db: TestDatabase, keepTables: string[]): 
     const ranges: Record<string, number> = {};
     for (const { name } of tables) {
       if (keepTables.includes(name) || name === 'test_kit_seed') continue;
-      const [[row]] = await conn.query<RowDataPacket[]>(`SELECT MAX(id) AS maxId FROM \`${name}\``);
+      const [[row]] = await conn.query<MaxIdRow[]>(`SELECT MAX(id) AS maxId FROM \`${name}\``);
       if (row.maxId !== null) ranges[name] = Number(row.maxId);
     }
     await conn.query('INSERT INTO test_kit_seed (ranges) VALUES (?)', [JSON.stringify(ranges)]);

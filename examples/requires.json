@@ -1,0 +1,7 @@
+{
+  "//": "Examples that need packages beyond the framework. setup.sh --examples copies one only when the service has these, and says which it skipped.",
+  "nest/bookings-api": ["class-validator", "class-transformer"],
+  "nest/reminders": ["@nestjs/schedule"],
+  "nest/typeorm": ["typeorm", "@nestjs/typeorm"],
+  "express/auth": ["zod"]
+}

@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { http, HttpResponse } from 'msw';
-import { fakeApis } from '../../../test/helpers/fake-apis.js';
+import { fakeApis } from '../../../../test/helpers/fake-apis.js';
 import { createApp } from './members-app.js';
 
 // An API test: real HTTP requests into the Express app with supertest, and the service it calls
@@ -66,6 +66,6 @@ describe('GET /api/members/:id', () => {
     const res = await request(app).get('/api/members/7').set('Authorization', 'Bearer abc');
 
     expect(res.status).toBe(status);
-    expect(res.body.error).toEqual(expect.any(String));
+    expect((res.body as { error: unknown }).error).toEqual(expect.any(String));
   });
 });

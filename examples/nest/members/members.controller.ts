@@ -8,8 +8,8 @@ export interface Member {
 /** Where members come from. In a real app this talks to the database; tests replace it. */
 @Injectable()
 export class MembersService {
-  async findOne(id: number): Promise<Member> {
-    throw new NotFoundException(`Member #${id} not found`);
+  findOne(id: number): Promise<Member> {
+    return Promise.reject(new NotFoundException(`Member #${id} not found`));
   }
 }
 

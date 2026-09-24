@@ -362,6 +362,13 @@ let s = fs.readFileSync('test/setup/project.ts', 'utf8');
 s = s.replace('  // __TEST_ENV__', testEnv.length > 0
   ? `  // From ${envFiles[0]}. Replace anything that looks real with a test value.\n${testEnv.join('\n')}`
   : '  // Nothing found in .env.example. Add what the app needs to load, e.g. API_URL: \'https://api.test\'');
+if (!/\bawait\b/.test(migrate)) {
+  // Nothing to await: a plain function (strict lint rejects async without await), and db still
+  // referenced so it does not count as unused.
+  if (!/void db;/.test(migrate)) migrate = `  void db;\n${migrate}`;
+  s = s.replace('export async function migrate(db: TestDatabase): Promise<void> {',
+    'export function migrate(db: TestDatabase): Promise<void> | void {');
+}
 s = s.replace('  // __MIGRATE__', migrate);
 s = s.replace('export const needsDatabase = true; // __NEEDS_DATABASE__', `export const needsDatabase = ${needsDatabase};`);
 s = s.replace('    // __APP_ENV__\n', lines);
@@ -384,14 +391,38 @@ NODE
       cp -R "$kit/examples/$framework" "$source_dir/examples/$framework"
     fi
     if [ "$source_dir" = . ]; then
-      # One folder less between the examples and test/.
-      find ./examples -name '*.ts' -exec sed -i.bak "s#'\.\./\.\./\.\./test/#'../../test/#" {} + &&
+      # One folder less between the examples and test/: drop one '../' from each path to test/.
+      find ./examples -name '*.ts' -exec sed -i.bak -E "s#'\.\./((\.\./)*test/)#'\1#" {} + &&
         find ./examples -name '*.bak' -delete
     fi
-    if grep -q 'needsDatabase = false' test/setup/project.ts 2>/dev/null; then
-      rm -f "$source_dir"/examples/common/notes-repository*
-      echo "  (left out the database example: this service has no database)"
-    fi
+    # Leave out examples that need packages this service does not have (examples/requires.json),
+    # and the database examples when it has no database.
+    KIT="$kit" SOURCE_DIR="$source_dir" node -e '
+      const fs = require("fs");
+      const path = require("path");
+      const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      const requires = JSON.parse(fs.readFileSync(process.env.KIT + "/examples/requires.json", "utf8"));
+      const root = path.join(process.env.SOURCE_DIR, "examples");
+      for (const [folder, needs] of Object.entries(requires)) {
+        if (folder.startsWith("/") || !fs.existsSync(path.join(root, folder))) continue;
+        const missing = needs.filter(name => !deps[name]);
+        if (missing.length > 0) {
+          fs.rmSync(path.join(root, folder), { recursive: true });
+          console.log(`  (left out ${folder}: needs ${missing.join(", ")})`);
+        }
+      }
+      const noDatabase = /needsDatabase = false/.test(fs.readFileSync("test/setup/project.ts", "utf8"));
+      if (noDatabase) {
+        for (const folder of ["common/notes-repository", "nest/typeorm"]) {
+          const target = path.join(root, folder);
+          const files = folder.includes("/notes-") ? fs.readdirSync(path.dirname(target))
+            .filter(f => f.startsWith("notes-repository")).map(f => path.join(path.dirname(target), f)) : [target];
+          for (const file of files) if (fs.existsSync(file)) fs.rmSync(file, { recursive: true });
+        }
+        console.log("  (left out the database examples: this service has no database)");
+      }
+    '
     find "$source_dir/examples" -name '*spec.ts' | sed 's/^/  /'
   fi
 
@@ -404,13 +435,17 @@ NODE
     const deps = { ...p.dependencies, ...p.devDependencies };
     let tsMajor = NaN;
     try { tsMajor = parseInt(JSON.parse(fs.readFileSync("node_modules/typescript/package.json", "utf8")).version, 10); } catch {}
-    process.exit((deps.typeorm || deps["@nestjs/typeorm"]) && tsMajor < 7 ? 0 : 1);
+    // ESM projects (type: module) stay on SWC: ts-jest would emit ES modules there, and TypeORM
+    // already requires ESM projects to wrap relations in Relation<>, which avoids the cycle.
+    const commonJs = p.type !== "module";
+    process.exit((deps.typeorm || deps["@nestjs/typeorm"]) && tsMajor < 7 && commonJs ? 0 : 1);
   '; then
     compiler=ts-jest
     sed -i.bak "s#^const compiler = 'swc'; // __COMPILER__#const compiler = 'ts-jest'; // TypeORM: see above#" test/setup/jest.base.cjs
     rm -f test/setup/jest.base.cjs.bak
     step "Compiler"
-    echo "  ts-jest (transpile-only): TypeORM entities often import each other, which SWC cannot load"
+    echo "  ts-jest (transpile-only): in a CommonJS TypeORM project, entities that import each other"
+    echo "  fail under SWC"
   fi
 
   # --- TypeScript --------------------------------------------------------------------------

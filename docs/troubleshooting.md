@@ -17,10 +17,10 @@ still checked, once, by `npm run typecheck`. Until you switch, cap the workers:
 compiled with SWC. SWC's CommonJS output reads the other class before its module has finished
 loading; TypeScript's output does not.
 
-**Fix:** use ts-jest in transpile-only mode: set `const compiler = 'ts-jest'` in
-`test/setup/jest.base.cjs` and install `ts-jest` (setup.sh does both for TypeORM projects on
-TypeScript 6 or earlier). On TypeScript 7, which ts-jest does not support, wrap the relation types
-instead: `@ManyToOne(() => Role) role: Relation<Role>` (TypeORM's `Relation` type).
+**Fix:** in a CommonJS project on TypeScript 6 or earlier, use ts-jest in transpile-only mode: set
+`const compiler = 'ts-jest'` in `test/setup/jest.base.cjs` and install `ts-jest` (setup.sh does
+both for such TypeORM projects). Otherwise (ESM projects, TypeScript 7) wrap the relation types,
+as TypeORM's docs require for ESM anyway: `@ManyToOne(() => Role) role: Relation<Role>`.
 
 ## A mock that was set up once stops working after the first test
 

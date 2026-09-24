@@ -1,9 +1,25 @@
-import type { Pool } from 'mysql2/promise';
+import { type Pool, type RowDataPacket, createPool } from 'mysql2/promise';
 
 /**
  * The test database, for integration tests (*.int-spec.ts, *.e2e-spec.ts). Only available when
  * running `npm run test:integration`: test/setup/global-setup.ts creates it.
  */
+
+interface TestDbSettings {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+}
+
+interface TableRow extends RowDataPacket {
+  name: string;
+}
+
+interface SeedRow extends RowDataPacket {
+  ranges: Record<string, number> | null;
+}
 
 let pool: Pool | undefined;
 
@@ -17,9 +33,8 @@ export function testDb(): Pool {
           'needsDatabase = true in test/setup/project.ts.'
       );
     }
-    const { host, port, user, password, database } = JSON.parse(raw);
-    // Imported here, not at the top, so unit tests never load mysql2.
-    const { createPool } = require('mysql2/promise') as typeof import('mysql2/promise');
+    const { host, port, user, password, database } = JSON.parse(raw) as TestDbSettings;
+    // createPool opens no connection until the first query, so unit tests never connect.
     pool = createPool({ host, port, user, password, database, connectionLimit: 2 });
   }
   return pool;
@@ -35,12 +50,10 @@ export function testDb(): Pool {
 export async function resetDatabase(): Promise<void> {
   const conn = await testDb().getConnection(); // one session: FOREIGN_KEY_CHECKS is per session
   try {
-    const keep: string[] = JSON.parse(process.env.TEST_DB_KEEP_TABLES ?? '[]');
-    const [[seed]] = await conn.query<import('mysql2').RowDataPacket[]>(
-      'SELECT ranges FROM test_kit_seed LIMIT 1'
-    );
+    const keep = JSON.parse(process.env.TEST_DB_KEEP_TABLES ?? '[]') as string[];
+    const [[seed]] = await conn.query<SeedRow[]>('SELECT ranges FROM test_kit_seed LIMIT 1');
     const seeded: Record<string, number> = seed?.ranges ?? {};
-    const [tables] = await conn.query<import('mysql2').RowDataPacket[]>(
+    const [tables] = await conn.query<TableRow[]>(
       `SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'`
     );
