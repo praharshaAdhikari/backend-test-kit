@@ -1,7 +1,6 @@
-import type { StartedMySqlContainer } from '@testcontainers/mysql';
-
 export default async function globalTeardown(): Promise<void> {
-  // A reused container stays up for the next run.
+  // Reused containers stay up for the next run.
   if (process.env.TESTCONTAINERS_REUSE_ENABLE === 'true') return;
-  await (globalThis as { __TEST_MYSQL__?: StartedMySqlContainer }).__TEST_MYSQL__?.stop();
+  const containers = (globalThis as { __TEST_CONTAINERS__?: { stop(): Promise<unknown> }[] }).__TEST_CONTAINERS__;
+  await Promise.all((containers ?? []).map(container => container.stop()));
 }

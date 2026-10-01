@@ -44,7 +44,7 @@ describe('BookingRemindersJob', () => {
   });
 
   async function book(date: string, contactEmail = 'asha@example.com') {
-    return store.save({ hallId: 1, date, guests: 2, contactEmail });
+    return store.save({ hallId: 1, date, guests: 2, contactEmail, bookedBy: 7 });
   }
 
   it('reminds the bookings for tomorrow and no other day', async () => {

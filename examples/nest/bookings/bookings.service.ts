@@ -6,12 +6,15 @@ import {
 } from '@nestjs/common';
 import { type Booking, BookingsStore } from './bookings.store.js';
 import { Clock, dateOf } from './clock.js';
+import type { RequestUser } from './roles.guard.js';
 
 export interface BookingRequest {
   hallId: number;
   date: string;
   guests: number;
   contactEmail: string;
+  /** The signed-in user's id. The controller takes it from the request, never from the body. */
+  bookedBy: number;
 }
 
 /**
@@ -45,7 +48,23 @@ export class BookingsService {
       hallId: hall.id,
       date: request.date,
       guests: request.guests,
-      contactEmail: request.contactEmail.trim().toLowerCase()
+      contactEmail: request.contactEmail.trim().toLowerCase(),
+      bookedBy: request.bookedBy
     });
+  }
+
+  /** A booking, for the user who made it or an admin. */
+  async findOne(bookingId: number, user: RequestUser): Promise<Booking> {
+    const booking = await this.store.findBooking(bookingId);
+    // Someone else's booking gets the same answer as one that does not exist: a 403 would tell
+    // the caller that booking #N is real.
+    if (!booking || (booking.bookedBy !== user.id && !user.roles.includes('admin'))) {
+      throw new NotFoundException(`Booking #${bookingId} not found`);
+    }
+    return booking;
+  }
+
+  listMine(user: RequestUser): Promise<Booking[]> {
+    return this.store.bookingsFor(user.id);
   }
 }

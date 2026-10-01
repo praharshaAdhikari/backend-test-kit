@@ -1,3 +1,4 @@
+import type { TestRedis } from '../helpers/redis.js';
 import { runSqlFiles, type TestDatabase } from './test-database.js';
 
 /**
@@ -55,6 +56,27 @@ export function appEnv(db: TestDatabase): Record<string, string> {
   return {
     // __APP_ENV__
     DATABASE_URL: db.url
+  };
+}
+
+/**
+ * Whether this service uses Redis (a cache, BullMQ queues, sessions). When true,
+ * `npm run test:integration` also starts a Redis in Docker, empty and thrown away afterwards.
+ */
+export const needsRedis = false; // __NEEDS_REDIS__
+
+/** The Redis image the tests run against. Match production's major version. */
+export const redisImage = 'redis:7-alpine';
+
+/**
+ * The environment variables the app reads to find Redis, pointed at the test Redis. The test
+ * Redis has no password and no TLS: set those variables to '' or 'false' here if the app reads
+ * them, or it sends the values from testEnv to a server that does not expect them.
+ */
+export function redisEnv(redis: TestRedis): Record<string, string> {
+  return {
+    // __REDIS_ENV__
+    REDIS_URL: redis.url
   };
 }
 

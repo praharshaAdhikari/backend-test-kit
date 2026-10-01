@@ -33,6 +33,14 @@ export class InMemoryBookingsStore extends BookingsStore {
     return Promise.resolve(saved);
   }
 
+  findBooking(bookingId: number): Promise<Booking | null> {
+    return Promise.resolve(this.bookings.find(booking => booking.id === bookingId) ?? null);
+  }
+
+  bookingsFor(userId: number): Promise<Booking[]> {
+    return Promise.resolve(this.bookings.filter(booking => booking.bookedBy === userId));
+  }
+
   dueForReminder(date: string): Promise<Booking[]> {
     return Promise.resolve(this.bookings.filter(booking => booking.date === date && !booking.reminderSentAt));
   }

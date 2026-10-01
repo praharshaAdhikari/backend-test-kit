@@ -33,6 +33,9 @@ export class BookingEntity {
   @Column({ length: 200 })
   contactEmail!: string;
 
+  @Column()
+  bookedBy!: number;
+
   @Column({ type: 'datetime', nullable: true })
   reminderSentAt!: Date | null;
 }

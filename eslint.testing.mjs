@@ -20,7 +20,7 @@ export const testingConfig = [
   },
   {
     ...jest.configs['flat/recommended'],
-    files: ['**/*.spec.ts', '**/*.int-spec.ts', '**/*.e2e-spec.ts', 'test/**/*.ts'],
+    files: ['**/*.spec.ts', '**/*.int-spec.ts', '**/*.e2e-spec.ts', '**/*.contract.ts', 'test/**/*.ts'],
     rules: {
       ...jest.configs['flat/recommended'].rules,
       'jest/no-focused-tests': 'error',
@@ -29,5 +29,8 @@ export const testingConfig = [
       // supertest's `.expect(200)` counts as an assertion too.
       'jest/expect-expect': ['error', { assertFunctionNames: ['expect', 'request.**.expect'] }]
     }
-  }
+  },
+  // A contract file (tests shared by several implementations, e.g. a fake and the real store)
+  // exports the function that the spec files call.
+  { files: ['**/*.contract.ts'], rules: { 'jest/no-export': 'off' } }
 ];

@@ -1,9 +1,10 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { resetDatabase } from '../../../../test/helpers/database.js';
 import { BookingEntity, HallEntity } from './booking.entities.js';
+import { bookingsStoreContract } from '../bookings/bookings-store.contract.js';
 import { BookingsService } from '../bookings/bookings.service.js';
 import { BookingsStore } from '../bookings/bookings.store.js';
 import { Clock, SystemClock } from '../bookings/clock.js';
@@ -11,7 +12,11 @@ import { TypeOrmBookingsStore } from './typeorm-bookings.store.js';
 
 // An integration test of TypeORM code: the real repository and query builder against the MySQL
 // that `npm run test:integration` starts. It checks what only the database can: the SUM, the
-// WHERE clauses, dates, and NULLs. The last test runs the service with the real store.
+// WHERE clauses, dates, and NULLs.
+//
+// The store's behaviour is the shared contract (../bookings/bookings-store.contract.ts), the same
+// tests the in-memory fake passes. After it, the service runs with the real store: the full
+// path, once.
 //
 // In your project the migrations create the tables; this example creates its own so it runs
 // anywhere. In your tests, point TypeOrmModule at the env variables your app reads.
@@ -28,7 +33,7 @@ function testDatabase() {
   return { type: 'mysql' as const, host, port, username: user, password, database, timezone: 'Z' };
 }
 
-describe('TypeOrmBookingsStore (real MySQL)', () => {
+describe('the TypeORM bookings store (real MySQL)', () => {
   let moduleRef: TestingModule;
   let store: TypeOrmBookingsStore;
   let dataSource: DataSource;
@@ -48,11 +53,15 @@ describe('TypeOrmBookingsStore (real MySQL)', () => {
     }).compile();
     store = moduleRef.get(TypeOrmBookingsStore);
     dataSource = moduleRef.get(DataSource);
-    await dataSource.query(`CREATE TABLE IF NOT EXISTS example_halls (
+    // Dropped first: a run that was interrupted (or a container kept between runs) may have left
+    // the tables behind in an older shape.
+    await dataSource.query('DROP TABLE IF EXISTS example_bookings');
+    await dataSource.query('DROP TABLE IF EXISTS example_halls');
+    await dataSource.query(`CREATE TABLE example_halls (
       id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, capacity INT NOT NULL)`);
-    await dataSource.query(`CREATE TABLE IF NOT EXISTS example_bookings (
+    await dataSource.query(`CREATE TABLE example_bookings (
       id INT AUTO_INCREMENT PRIMARY KEY, hallId INT NOT NULL, date DATE NOT NULL, guests INT NOT NULL,
-      contactEmail VARCHAR(200) NOT NULL, reminderSentAt DATETIME NULL)`);
+      contactEmail VARCHAR(200) NOT NULL, bookedBy INT NOT NULL, reminderSentAt DATETIME NULL)`);
   });
 
   afterAll(async () => {
@@ -67,68 +76,36 @@ describe('TypeOrmBookingsStore (real MySQL)', () => {
     return dataSource.getRepository(HallEntity).save({ name: 'Main hall', capacity });
   }
 
-  async function booking(hallId: number, date: string, guests: number, reminderSentAt: Date | null = null) {
+  async function booking(hallId: number, date: string, guests: number, bookedBy = 7) {
     return dataSource
       .getRepository(BookingEntity)
-      .save({ hallId, date, guests, contactEmail: 'asha@example.com', reminderSentAt });
+      .save({ hallId, date, guests, contactEmail: 'asha@example.com', bookedBy, reminderSentAt: null });
   }
 
-  it('adds up the guests for that hall on that date only', async () => {
-    const main = await hall();
-    const annex = await hall();
-    await booking(main.id, '2026-10-01', 30);
-    await booking(main.id, '2026-10-01', 12);
-    await booking(main.id, '2026-10-02', 50); // another day
-    await booking(annex.id, '2026-10-01', 70); // another hall
+  bookingsStoreContract('TypeOrmBookingsStore', () => ({ store, addHall: hall }));
 
-    await expect(store.guestsBooked(main.id, '2026-10-01')).resolves.toBe(42);
-  });
+  describe('BookingsService with this store', () => {
+    it('refuses a booking the hall has no room for', async () => {
+      const main = await hall(50);
+      await booking(main.id, '2099-01-01', 45);
+      const service = moduleRef.get(BookingsService);
 
-  it('counts zero guests when nothing is booked (SUM of no rows is NULL in SQL)', async () => {
-    const main = await hall();
+      await expect(
+        service.create({ hallId: main.id, date: '2099-01-01', guests: 6, contactEmail: 'a@b.test', bookedBy: 7 })
+      ).rejects.toThrow(ConflictException);
+      await expect(store.guestsBooked(main.id, '2099-01-01')).resolves.toBe(45);
+    });
 
-    await expect(store.guestsBooked(main.id, '2026-10-01')).resolves.toBe(0);
-  });
+    it("answers not found for another user's booking, and returns it to its owner", async () => {
+      const main = await hall();
+      const ashas = await booking(main.id, '2099-01-01', 2, 7);
+      const service = moduleRef.get(BookingsService);
 
-  it('saves a booking and reads it back with the same date, not reminded yet', async () => {
-    const main = await hall();
-
-    const saved = await store.save({ hallId: main.id, date: '2026-10-01', guests: 3, contactEmail: 'a@b.test' });
-
-    // A DATE column read back as a string: no time zone shifts it to the day before.
-    await expect(store.dueForReminder('2026-10-01')).resolves.toEqual([
-      { id: saved.id, hallId: main.id, date: '2026-10-01', guests: 3, contactEmail: 'a@b.test', reminderSentAt: null }
-    ]);
-  });
-
-  it('finds bookings due a reminder: that date, not yet reminded', async () => {
-    const main = await hall();
-    const due = await booking(main.id, '2026-10-01', 2);
-    await booking(main.id, '2026-10-01', 2, new Date('2026-09-30T08:00:00Z')); // already reminded
-    await booking(main.id, '2026-10-02', 2); // another day
-
-    const found = await store.dueForReminder('2026-10-01');
-
-    expect(found.map(b => b.id)).toEqual([due.id]);
-  });
-
-  it('marks a reminder as sent, so it is not due any more', async () => {
-    const main = await hall();
-    const due = await booking(main.id, '2026-10-01', 2);
-
-    await store.markReminderSent(due.id, new Date('2026-09-30T08:00:00Z'));
-
-    await expect(store.dueForReminder('2026-10-01')).resolves.toEqual([]);
-  });
-
-  it('with the real store, the service refuses a booking the hall has no room for', async () => {
-    const main = await hall(50);
-    await booking(main.id, '2099-01-01', 45);
-    const service = moduleRef.get(BookingsService);
-
-    await expect(
-      service.create({ hallId: main.id, date: '2099-01-01', guests: 6, contactEmail: 'a@b.test' })
-    ).rejects.toThrow(ConflictException);
-    await expect(store.guestsBooked(main.id, '2099-01-01')).resolves.toBe(45);
+      await expect(service.findOne(ashas.id, { id: 8, roles: ['front-desk'] })).rejects.toThrow(NotFoundException);
+      await expect(service.findOne(ashas.id, { id: 7, roles: ['front-desk'] })).resolves.toMatchObject({
+        id: ashas.id,
+        bookedBy: 7
+      });
+    });
   });
 });

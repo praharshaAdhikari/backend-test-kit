@@ -26,6 +26,26 @@ export function requireRole(...roles: string[]): RequestHandler {
 }
 
 /**
+ * Lets the request through only when the :userId in the URL is the signed-in user's own id, or
+ * the user has one of these roles. A role check alone cannot do this: two users with the same
+ * role must still not read each other's records.
+ */
+export function requireSelfOrRole(...roles: string[]): RequestHandler {
+  return (req: AuthedRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Sign in first' });
+      return;
+    }
+    const isSelf = Number(req.params.userId) === req.user.id;
+    if (!isSelf && !roles.some(role => req.user?.roles.includes(role))) {
+      res.status(403).json({ error: 'You can only see your own records' });
+      return;
+    }
+    next();
+  };
+}
+
+/**
  * Checks the body against a zod schema. A bad body is answered with 400 and every problem; a good
  * one replaces req.body with the parsed value (unknown fields dropped, types as the schema says).
  */

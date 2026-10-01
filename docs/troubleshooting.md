@@ -90,6 +90,36 @@ a timer, a server started with `listen()`.
 `testDb()` rather than your own pool: the kit closes it. Test the app with supertest on
 `createApp()` rather than a listening server. `npx jest --detectOpenHandles` shows what is open.
 
+With Redis: `await redis.quit()` for a client the test created. With BullMQ, every `Worker`,
+`QueueEvents` and `Queue` holds its own connection (a worker holds two): close all three in
+`afterEach`, the worker first.
+
+## "No test Redis. Integration tests run with `npm run test:integration` ..."
+
+**Cause:** `testRedis()` or `flushRedis()` was called, and no Redis was started: either the file
+is a unit test (`*.spec.ts`), or `needsRedis` is not `true` in `test/setup/project.ts` (one
+written before the kit had Redis has no such line).
+
+**Fix:** name the file `*.int-spec.ts`, and set `needsRedis = true` (the README, "An integration
+test (real Redis)", has the lines to add to an older `project.ts`).
+
+## The app cannot connect to the test Redis ("WRONGPASS", "ECONNRESET", or it hangs)
+
+**Cause:** the test Redis has no password and no TLS, and the app is sending the ones from
+`.env.example` (they are in `testEnv`), or reads a host variable that `redisEnv()` does not set.
+
+**Fix:** in `redisEnv()` in `test/setup/project.ts`, set every variable the app's Redis client
+reads: the host, port or URL from `redis`, the password and user to `''`, and a TLS switch
+(`REDIS_TLS`) to `'false'`. Values set there win over `testEnv`.
+
+## A queue test passes alone and fails with the others, or a job runs in the wrong test
+
+**Cause:** a worker from an earlier test is still running and takes the next test's jobs, or
+`flushRedis()` ran while a worker was still writing.
+
+**Fix:** close the worker in `afterEach` (`await worker.close()`), and call `flushRedis()` in
+`beforeEach`, after it. Do not use fake timers in a queue test: BullMQ's delays run in Redis.
+
 ## The test process exits with "Environment validation failed" (or similar) before any test runs
 
 **Cause:** a config module checks `process.env` when it is imported and calls `process.exit(1)`

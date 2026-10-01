@@ -1,7 +1,8 @@
 import express, { type NextFunction, type Response } from 'express';
 import request from 'supertest';
 import { hallsRouter } from './halls.routes.js';
-import { type AuthedRequest, requireRole } from './auth.middleware.js';
+import { type AuthedRequest, requireRole, requireSelfOrRole } from './auth.middleware.js';
+import { userBookingsRouter } from './user-bookings.routes.js';
 
 // Two ways to test Express middleware. First on its own, with a fake request and response: fast,
 // and every branch is easy to reach. Then through a router with supertest, which proves the
@@ -80,5 +81,74 @@ describe('POST /halls (middlewares on a route)', () => {
 
     expect(res.status).toBe(403);
     expect(saveHall).not.toHaveBeenCalled();
+  });
+});
+
+// Ownership: "may this user see THIS record?", which a role cannot answer. The table has the
+// case that matters most, and is easiest to forget: a signed-in user with the right role for
+// the route, asking for someone else's records.
+describe('requireSelfOrRole (on its own)', () => {
+  it.each([
+    ['the user asks for their own records', { id: 7, roles: ['member'] }, '7', 'next'],
+    ["an admin asks for someone else's", { id: 1, roles: ['admin'] }, '7', 'next'],
+    ["a user asks for someone else's", { id: 8, roles: ['member'] }, '7', 403],
+    ['the id in the URL is not a number', { id: 8, roles: ['member'] }, 'me', 403],
+    ['nobody is signed in', undefined, '7', 401]
+  ])('when %s', (_label, user, userId, expected) => {
+    const next = jest.fn();
+    const res = fakeResponse();
+    const req = { user, params: { userId } } as unknown as AuthedRequest;
+
+    requireSelfOrRole('admin')(req, res as unknown as Response, next as NextFunction);
+
+    // Either next() was called, or a status was sent: never both, never neither.
+    const outcomes = [...next.mock.calls.map(() => 'next'), ...res.status.mock.calls.map(([status]) => status as number)];
+    expect(outcomes).toEqual([expected]);
+  });
+});
+
+describe('GET /users/:userId/bookings (ownership on a route)', () => {
+  const listBookings = jest.fn();
+  const app = express();
+  // Stands in for the authentication middleware: X-Test-User is the signed-in user's id.
+  app.use((req, _res, next) => {
+    const id = req.header('x-test-user');
+    if (id) (req as AuthedRequest).user = { id: Number(id), roles: [req.header('x-test-role') ?? 'member'] };
+    next();
+  });
+  app.use('/users', userBookingsRouter(listBookings));
+
+  it("answers 200 with the user's own bookings", async () => {
+    listBookings.mockResolvedValue([{ id: 5, guests: 2 }]);
+
+    const res = await request(app).get('/users/7/bookings').set('X-Test-User', '7');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ id: 5, guests: 2 }]);
+    expect(listBookings).toHaveBeenCalledWith(7);
+  });
+
+  it("answers 403 for another user's bookings, without loading them", async () => {
+    const res = await request(app).get('/users/7/bookings').set('X-Test-User', '8');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'You can only see your own records' });
+    expect(listBookings).not.toHaveBeenCalled();
+  });
+
+  it("lets an admin see another user's bookings", async () => {
+    listBookings.mockResolvedValue([]);
+
+    const res = await request(app).get('/users/7/bookings').set('X-Test-User', '1').set('X-Test-Role', 'admin');
+
+    expect(res.status).toBe(200);
+    expect(listBookings).toHaveBeenCalledWith(7);
+  });
+
+  it('answers 401 when nobody is signed in', async () => {
+    const res = await request(app).get('/users/7/bookings');
+
+    expect(res.status).toBe(401);
+    expect(listBookings).not.toHaveBeenCalled();
   });
 });

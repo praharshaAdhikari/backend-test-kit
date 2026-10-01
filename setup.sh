@@ -18,13 +18,14 @@ set -euo pipefail
 main() {
   local repo_url="${QA_KIT_REPO:-https://github.com/praharshaAdhikari/backend-test-kit.git}"
   local ref="${QA_KIT_REF:-main}"
-  local examples=0 force=0 install=1
+  local examples=0 force=0 install=1 mutation=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --examples) examples=1 ;;
       --force) force=1 ;;
       --no-install) install=0 ;;
+      --mutation) mutation=1 ;;
       -h | --help)
         usage
         return 0
@@ -131,6 +132,7 @@ main() {
     test/setup/test-database.ts
     test/helpers/database.ts
     test/helpers/fake-apis.ts
+    test/helpers/redis.ts
   )
   local conflicts=() file
   for file in "${files[@]}"; do
@@ -166,6 +168,10 @@ main() {
   step "Writing test/setup/project.ts"
   if [ -e test/setup/project.ts ]; then
     echo "  kept yours: test/setup/project.ts is this project's own settings"
+    if ! grep -q 'needsRedis' test/setup/project.ts &&
+      echo "$project" | grep -Eq '"(ioredis|redis|bullmq|bull|@nestjs/bullmq|@nestjs/bull)"'; then
+      warn "This service uses Redis, and test/setup/project.ts was written before the kit could start one. To test against a real Redis, add needsRedis, redisImage and redisEnv to it (README, \"An integration test (real Redis)\")."
+    fi
   else
     cp "$kit/test/setup/project.ts" test/setup/project.ts
     KIT_SOURCE_DIR="$source_dir" node - <<'NODE'
@@ -320,7 +326,7 @@ const roles = [
   ['password', /_(PASS|PASSWORD|PWD)$/],
   ['database', /_(DB|NAME|DATABASE|DBNAME|SCHEMA)$/]
 ];
-const otherServices = /REDIS|SMTP|MAIL|S3|AWS|MONGO|RABBIT|KAFKA|ELASTIC|STRIPE|SQUARE|SENTRY|APP_|SERVER_/;
+const otherServices = /REDIS|CACHE|QUEUE|BULL|SMTP|MAIL|S3|AWS|MONGO|RABBIT|KAFKA|ELASTIC|STRIPE|SQUARE|SENTRY|APP_|SERVER_/;
 // Connection tuning and container-only settings, not "where is the database".
 const notConnection = /STRICT|ROOT|HOST_PORT|SSL|POOL|TIMEOUT|LIMIT|CHARSET|LOGGING|SYNC/;
 const env = [];
@@ -343,6 +349,26 @@ const needsDatabase = hasDatabaseLibrary || found.length > 0 || env.length > 0 |
 if (!needsDatabase) {
   migrate = '  void db; // needsDatabase is false above: this runs only if you turn it on.';
   summary = 'no database library, migrations or database settings found: integration tests run without MySQL (needsDatabase = false)';
+}
+
+// Redis: a cache, BullMQ queues, sessions. The variables that say where it is are pointed at the
+// test Redis; the ones for a password, a user or TLS are emptied, because the test Redis has none.
+const redisDeps = ['ioredis', 'redis', 'bullmq', '@nestjs/bullmq', 'bull', '@nestjs/bull', '@keyv/redis', 'connect-redis'];
+const needsRedis = redisDeps.some(name => deps[name]);
+const redisRoles = [
+  ['redis.host', /_HOST(NAME)?$/],
+  ['String(redis.port)', /_PORT$/],
+  ['redis.url', /_(URL|URI)$/],
+  ["''", /_(USER|USERNAME|PASS|PASSWORD|PWD|AUTH)$/],
+  ["'false'", /_(TLS|SSL)$/]
+];
+const redisEnv = [];
+for (const name of [...names].filter(n => /REDIS/.test(n) && n !== 'REDIS_URL').sort()) {
+  const role = redisRoles.find(([, re]) => re.test(name));
+  if (role) redisEnv.push(`    ${name}: ${role[0]},`);
+}
+if (needsRedis && redisEnv.length === 0) {
+  redisEnv.push('    REDIS_HOST: redis.host,', '    REDIS_PORT: String(redis.port),');
 }
 
 // testEnv: the example values from .env.example (committed, so not secrets), minus the database
@@ -372,10 +398,13 @@ if (!/\bawait\b/.test(migrate)) {
 s = s.replace('  // __MIGRATE__', migrate);
 s = s.replace('export const needsDatabase = true; // __NEEDS_DATABASE__', `export const needsDatabase = ${needsDatabase};`);
 s = s.replace('    // __APP_ENV__\n', lines);
+s = s.replace('export const needsRedis = false; // __NEEDS_REDIS__', `export const needsRedis = ${needsRedis};`);
+s = s.replace('    // __REDIS_ENV__\n', redisEnv.length > 0 ? redisEnv.join('\n') + '\n' : '');
 fs.writeFileSync('test/setup/project.ts', s);
 console.log(`  schema: ${summary}`);
 console.log(`  settings for tests (testEnv): ${testEnv.length > 0 ? `${testEnv.length} from ${envFiles[0]}` : 'none found'}`);
 console.log(`  database settings: ${env.length > 0 ? env.map(l => l.trim().split(':')[0]).join(', ') + ', DATABASE_URL' : 'DATABASE_URL only (none detected)'}`);
+if (needsRedis) console.log(`  Redis: integration tests start one (needsRedis = true); settings: ${redisEnv.map(l => l.trim().split(':')[0]).concat('REDIS_URL').join(', ')}`);
 NODE
     echo "  Check both in test/setup/project.ts before the first integration run."
   fi
@@ -421,6 +450,12 @@ NODE
           for (const file of files) if (fs.existsSync(file)) fs.rmSync(file, { recursive: true });
         }
         console.log("  (left out the database examples: this service has no database)");
+      }
+      // The cache and queue examples run against the Redis that needsRedis = true starts.
+      const redisExamples = ["common/product-cache", "common/reminder-queue"].filter(f => fs.existsSync(path.join(root, f)));
+      if (redisExamples.length > 0 && !/needsRedis = true/.test(fs.readFileSync("test/setup/project.ts", "utf8"))) {
+        for (const folder of redisExamples) fs.rmSync(path.join(root, folder), { recursive: true });
+        console.log("  (left out the Redis examples: needsRedis is not true in test/setup/project.ts)");
       }
     '
     find "$source_dir/examples" -name '*spec.ts' | sed 's/^/  /'
@@ -488,7 +523,7 @@ if (!coversTests || typesMissJest || rootDirTooNarrow) {
   const buildsWithMainConfig = !fs.existsSync('tsconfig.build.json') &&
     Object.values(pkg.scripts ?? {}).some(cmd => /(^|&&\s*|\s)tsc(\s|$)(?!.*-p\s)/.test(cmd) && !/--noEmit/.test(cmd));
   if (buildsWithMainConfig) {
-    const patterns = ['**/*.spec.ts', '**/*.int-spec.ts', '**/*.e2e-spec.ts'];
+    const patterns = ['**/*.spec.ts', '**/*.int-spec.ts', '**/*.e2e-spec.ts', '**/*.contract.ts'];
     // The copied examples are for reading and running, not for shipping.
     if (process.env.EXAMPLES_DIR) patterns.push(`${process.env.EXAMPLES_DIR.replace(/^\.\//, '')}/**`);
     let text = fs.readFileSync('tsconfig.json', 'utf8');
@@ -559,11 +594,58 @@ NODE
     echo "    ...and add ...testingConfig to the exported array."
   fi
 
+  # --- Mutation testing (only with --mutation) ---------------------------------------------
+
+  if [ "$mutation" = 1 ]; then
+    step "Adding mutation testing (Stryker)"
+    if [ -e stryker.config.mjs ] && [ "$force" = 0 ]; then
+      echo "  kept yours: stryker.config.mjs"
+    else
+      cp "$kit/stryker.config.mjs" stryker.config.mjs
+      SOURCE_DIR="$source_dir" node -e '
+        const fs = require("fs");
+        const dir = process.env.SOURCE_DIR.replace(/^\.\//, "");
+        let s = fs.readFileSync("stryker.config.mjs", "utf8");
+        if (dir === ".") {
+          // No source folder: everything except what is not the app.
+          s = s.replace(/(\n +)\x27src\/(\*\*\/\*\.[^\x27]+)\x27,/, (m, indent, glob) =>
+            [glob, "!node_modules/**", "!dist/**", "!build/**", "!.next/**", "!coverage/**", "!test/**", "!tests/**", "!*.config.*"]
+              .map(g => `${indent}\x27${g}\x27,`).join(""));
+          s = s.split("\x27!src/").join("\x27!").split(" src/").join(" ");
+        } else if (dir !== "src") {
+          s = s.split("src/").join(`${dir}/`);
+        }
+        fs.writeFileSync("stryker.config.mjs", s);
+      '
+      echo "  stryker.config.mjs"
+    fi
+    KIT="$kit" node -e '
+      const fs = require("fs");
+      const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+      const { mutation } = JSON.parse(fs.readFileSync(process.env.KIT + "/package.additions.json", "utf8"));
+      pkg.scripts ??= {};
+      for (const [name, command] of Object.entries(mutation.scripts)) {
+        if (pkg.scripts[name] === undefined) {
+          pkg.scripts[name] = command;
+          console.log(`  ${name}: ${command}`);
+        }
+      }
+      fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+      // Stryker works in a copy of the project; an interrupted run can leave it behind.
+      const ignore = fs.existsSync(".gitignore") ? fs.readFileSync(".gitignore", "utf8") : "";
+      const missing = [".stryker-tmp/", "coverage/"].filter(line => !ignore.split("\n").some(l => l.replace(/^\//, "").replace(/\/$/, "") === line.replace(/\/$/, "")));
+      if (missing.length > 0) {
+        fs.appendFileSync(".gitignore", (ignore === "" || ignore.endsWith("\n") ? "" : "\n") + missing.join("\n") + "\n");
+        console.log(`  .gitignore: added ${missing.join(", ")}`);
+      }
+    '
+  fi
+
   # --- Install and check -------------------------------------------------------------------
 
   if [ "$install" = 1 ]; then
     local deps pm
-    deps="$(KIT="$kit" PROJECT="$project" COMPILER="$compiler" node -e '
+    deps="$(KIT="$kit" PROJECT="$project" COMPILER="$compiler" MUTATION="$mutation" node -e '
       const { devDependencies } = require(process.env.KIT + "/package.additions.json");
       const project = JSON.parse(process.env.PROJECT);
       // Only what the project does not have yet: its own versions of jest, supertest, mysql2, ...
@@ -572,6 +654,10 @@ NODE
       const missing = Object.entries(devDependencies).filter(([n]) => !has.includes(n));
       if (has.includes("jest")) missing.splice(0, missing.length, ...missing.filter(([n]) => n !== "@types/jest"));
       if (process.env.COMPILER === "ts-jest" && !has.includes("ts-jest")) missing.push(["ts-jest", "^29.4.0"]);
+      if (process.env.MUTATION === "1") {
+        const { mutation } = require(process.env.KIT + "/package.additions.json");
+        missing.push(...Object.entries(mutation.devDependencies).filter(([n]) => !has.includes(n)));
+      }
       console.log(missing.map(([n, v]) => `${n}@${v}`).join(" "));
     ')"
     if [ -f pnpm-lock.yaml ]; then pm=pnpm
@@ -687,6 +773,7 @@ Options:
   --examples     also copy the reference tests into <source folder>/examples/ (delete it when done)
   --force        overwrite kit files that already exist (never test/setup/project.ts)
   --no-install   copy and configure only; skip installing dependencies and the Jest check
+  --mutation     also add mutation testing (Stryker): stryker.config.mjs and `npm run test:mutation`
   -h, --help     show this help
 
 Environment:

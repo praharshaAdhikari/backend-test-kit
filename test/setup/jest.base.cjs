@@ -114,7 +114,8 @@ module.exports = {
     // `\.pnpm` keeps pnpm's nested node_modules layout working.
     transformIgnorePatterns: [`/node_modules/(?!(?:\\.pnpm|${esmPackages.join('|')})/)`],
     ...withRelativeJsImports(aliasesFromTsconfig()),
-    testPathIgnorePatterns: ignoredFolders,
+    // .stryker-tmp: a copy of the project that an interrupted mutation run can leave behind.
+    testPathIgnorePatterns: [...ignoredFolders, '<rootDir>/.stryker-tmp/'],
     setupFilesAfterEnv: ['<rootDir>/test/setup/jest.setup.ts'],
     // Call history is cleared between tests. Implementations are left alone, so mocks a test file
     // sets up once (in a jest.mock factory, or beforeAll) keep working, as existing suites expect.
@@ -124,6 +125,7 @@ module.exports = {
       '!**/*.spec.ts',
       '!**/*.int-spec.ts',
       '!**/*.e2e-spec.ts',
+      '!**/*.contract.ts',
       '!**/*.d.ts',
       '!**/examples/**',
       '!<rootDir>/test/**',

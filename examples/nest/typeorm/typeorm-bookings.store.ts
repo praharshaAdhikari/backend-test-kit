@@ -35,6 +35,14 @@ export class TypeOrmBookingsStore extends BookingsStore {
     return this.bookings.save(this.bookings.create({ ...booking, reminderSentAt: null }));
   }
 
+  findBooking(bookingId: number): Promise<Booking | null> {
+    return this.bookings.findOne({ where: { id: bookingId } });
+  }
+
+  bookingsFor(userId: number): Promise<Booking[]> {
+    return this.bookings.find({ where: { bookedBy: userId }, order: { id: 'ASC' } });
+  }
+
   dueForReminder(date: string): Promise<Booking[]> {
     return this.bookings.find({ where: { date, reminderSentAt: IsNull() }, order: { id: 'ASC' } });
   }

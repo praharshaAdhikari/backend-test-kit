@@ -3,5 +3,7 @@
   "nest/bookings-api": ["class-validator", "class-transformer"],
   "nest/reminders": ["@nestjs/schedule"],
   "nest/typeorm": ["typeorm", "@nestjs/typeorm"],
-  "express/auth": ["zod"]
+  "express/auth": ["zod"],
+  "common/product-cache": ["ioredis"],
+  "common/reminder-queue": ["bullmq"]
 }

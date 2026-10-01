@@ -30,7 +30,8 @@ Short enough to read once, specific enough to review against.
 6. **No real network, no real time.** A request to an address the test did not fake fails it.
    Pass the current time in (`now = new Date()` as a parameter) or use fake timers; never wait.
 7. **Break it to prove it.** Before you commit a test, break the line it is about and watch it
-   fail. A test that never failed proves nothing.
+   fail. A test that never failed proves nothing. (`npm run test:mutation`, if the service has
+   it, does this for every line of a file: see "Mutation testing" in the kit README.)
 
 ## Required tests, by kind of code
 
@@ -45,6 +46,8 @@ Short enough to read once, specific enough to review against.
 - [ ] Invalid input: 400 and the error, and nothing downstream called
 - [ ] Not signed in (401) and not allowed (403), for every endpoint that checks
 - [ ] Not found (404)
+- [ ] A record that belongs to another user: 404 (or 403), with none of it in the body. Sign in
+      as a second user with the *same* role, so the test cannot pass on a role check alone
 - [ ] Each way a dependency fails, and what the caller gets for it
 
 **A guard, interceptor or pipe** (NestJS)
@@ -70,9 +73,22 @@ Short enough to read once, specific enough to review against.
 - [ ] Sums and money in SQL (DECIMAL), checked to the cent
 - [ ] Triggers, if the schema has them: the rows they write
 
+**A cache** (Redis in front of the database), as integration tests against a real Redis
+- [ ] The second read comes from the cache: the source is read once
+- [ ] After a change, the next read returns the new value, not the cached one
+- [ ] Every entry has a time to live (ask Redis for the TTL; never wait for it)
+- [ ] What is not cached on purpose: "not found", another user's data under the same key
+
+**A fake of something you own** (an in-memory store used by unit tests)
+- [ ] One contract: the store's tests written once, as a function that takes the store
+- [ ] Run against the fake (unit) and against the real implementation (integration); a
+      difference between the two fails one of the runs
+
 **Scheduled jobs and queues**
 - [ ] The job's effect, called directly (not through the scheduler), with the clock fixed
 - [ ] Running it twice does not do the work twice
+- [ ] A queue, against a real Redis: the worker receives exactly what was added; a failed job is
+      retried, and kept as failed after the last attempt; adding the same job twice queues one
 - [ ] What it does when a dependency fails halfway
 
 ## Reviewing a test

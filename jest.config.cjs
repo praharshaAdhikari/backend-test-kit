@@ -11,4 +11,6 @@ module.exports = {
   testMatch: ['<rootDir>/**/*.spec.ts'],
   // Half the cores: enough for speed, without taking the whole machine.
   maxWorkers: '50%'
+  // No coverage threshold on day one. Once the real number is known, add e.g.
+  // coverageThreshold: { global: { lines: 60, branches: 50 } } and only ever raise it.
 };
